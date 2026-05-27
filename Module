@@ -1,0 +1,66 @@
+class NoiseLayer(nn.Module):
+    def __init__(self, noise_std):
+        super(NoiseLayer, self).__init__()
+        self.noise_std = noise_std
+        
+    def forward(self, x):
+        if self.training and self.noise_std > 0:
+            # 1. 判断是否为复数张量
+            if x.is_complex():
+                # 分别生成实部和虚部的独立噪声
+                # 注意：为了保持总方差为 noise_std^2，实部和虚部的标准差需要除以 sqrt(2)
+                std_complex = self.noise_std / (2 ** 0.5)
+                
+                noise_real = torch.randn_like(x.real) * std_complex
+                noise_imag = torch.randn_like(x.imag) * std_complex
+                
+                # 组合成复数噪声并相加
+                # torch.complex 在新版 PyTorch 中推荐使用，或者直接 x.real + noise_real ...
+                return torch.complex(x.real + noise_real, x.imag + noise_imag)
+            
+            else:
+                # 2. 实数张量处理逻辑（保持原样）
+                noise = torch.randn_like(x) * self.noise_std
+                return x + noise
+                
+        return x
+class cTransposeConv(nn.Module):
+    """
+    Complex transpose convolution (learnable complex weights).
+    """
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 2,
+        stride: int = 2,
+        padding: int = 0,
+        bias: bool = False,
+        dilation: int = 1,
+        groups: int = 1,
+    ):
+        super().__init__()
+        assert in_channels % groups == 0
+        assert out_channels % groups == 0
+
+        if isinstance(padding, int):
+            padding = (padding, padding)
+        if isinstance(kernel_size, int):
+            kernel_size = (kernel_size, kernel_size)
+
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+
+        self.weight = nn.Parameter(
+            torch.randn((in_channels, out_channels // groups, *kernel_size), dtype=torch.cfloat)
+        )
+        self.bias = nn.Parameter(torch.randn((out_channels,), dtype=torch.cfloat)) if bias else None
+
+    def forward(self, x):
+        if x.dtype != torch.cfloat:
+            x = torch.complex(x, torch.zeros_like(x))
+        return F.conv_transpose2d(
+            x, self.weight, self.bias, self.stride, self.padding, 0, self.dilation, self.groups
+        )
